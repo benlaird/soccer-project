@@ -1,34 +1,38 @@
+import re
+from enum import Enum
+
 import pandas as pd
 from datetime import datetime
 import config
 
-if config.pycharm:
-    import pymysql
+
+def is_interactive():
+    import __main__ as main
+    return not hasattr(main, '__file__')
+
+
+if not is_interactive():
+    import pymysql as db_con
 else:
-    import mysql.connector
+    import mysql.connector as db_con
+
 
 cnx = None
 cursor = None
+
+
 
 
 def open_db():
     global cnx
     global cursor
 
-    if config.pycharm:
-        cnx = pymysql.connect(
-            host=config.host,
-            user=config.user,
-            passwd=config.pw,
-            database='soccer_matches'
-        )
-    else:
-        cnx = mysql.connector.connect(
-            host=config.host,
-            user=config.user,
-            passwd=config.pw,
-            database='soccer_matches'
-        )
+    cnx = db_con.connect(
+        host=config.host,
+        user=config.user,
+        passwd=config.pw,
+        database='soccer_matches'
+    )
 
     cursor = cnx.cursor()
 
@@ -146,10 +150,39 @@ def create_key(series):
     return key
 
 
+def fix_stadiums(series):
+    fix_stadium = {"Vicarage Road Stadium": "Vicarage Road",
+                   "Bet365 Stadium": "Britannia Stadium",
+                   "bet365 Stadium": "Britannia Stadium",
+                   "The DW Stadium": "DW Stadium",
+                   "St Andrew's Trillion Trophy Stadium": "St. Andrew's Stadium",
+                   "The American Express Community Stadium": "American Express Community Stadium",
+                   "John Smith's Stadium": "The John Smith's Stadium",
+                   "KCOM Stadium": "KC Stadium",
+                   "Loftus Road Stadium": "Loftus Road",
+                   "St. Mary's Stadium": "St Mary's Stadium",
+                   }
+
+    stad_keys = fix_stadium.keys()
+
+    res = re.sub(r"\(.*\)", "", series['stadium_name'])
+    res = res.strip()
+
+    if res in stad_keys:
+        return fix_stadium[res]
+    else:
+        return res
+
+
 def read_csv(filename):
     # 3rd arg means no NaNs will be generated
     df = pd.read_csv(filename, sep=',', keep_default_na=False)
     return df
+
+
+def save_table_to_csv():
+    df = pd.read_sql("select * from matches", cnx)
+    df.to_csv('all_matches.csv', sep=',')
 
 
 def read_csv_and_insert_db(season, filename):
@@ -169,6 +202,7 @@ def read_csv_and_insert_db(season, filename):
     df['datetime'] = df.apply(parse_date, axis=1)
     df['match_key'] = df.apply(create_key, axis=1)
     df['season'] = season
+    df['stadium_name'] = df.apply(fix_stadiums, axis=1)
     cols = list(df)
     # move the column to head of list using index, pop and insert
     cols.insert(0, cols.pop(cols.index('season')))
@@ -198,11 +232,8 @@ def read_all_csv_and_insert():
         read_csv_and_insert_db(year, files[year])
 
 
-create_table = False
-
-if create_table:
-    open_conn_and_create_main_table()
-else:
+def read_matches_from_db():
     open_db()
-    read_all_csv_and_insert()
+    df = pd.read_sql("select * from matches", cnx)
     close_db()
+    return df
