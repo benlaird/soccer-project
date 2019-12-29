@@ -3,22 +3,34 @@ from enum import Enum
 import random
 import pandas as pd
 import numpy as np
+from numpy import std, mean, sqrt
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 from tabulate import tabulate
+from functools import reduce
 
 import createDBTables
 
 ActionEnum = Enum('Action', ['create_table', 'insert_to_db', 'run_paired_t_test'])
 
+_alpha = 0.05
+
 stats_to_compute = {'Goal difference':
                         namedtuple('Goal_Diff',
                                    ['order', 'integral_stat', 'title', 'home_label', 'away_label',
                                     'home_metric', 'away_metric'])
-                         (0, True, 'Goal Difference', 'Home Goal difference', 'Away Goal difference',
+                         (0, True, 'Goal difference', 'Home Goal difference', 'Away Goal difference',
                          lambda ds: ds['home_team_goal_count'],
                          lambda ds: ds['away_team_goal_count']),
+
+                    'Points difference':
+                        namedtuple('Points_Diff',
+                                   ['order', 'integral_stat', 'title', 'home_label', 'away_label',
+                                    'home_metric', 'away_metric'])
+                         (4, True, 'Points difference', 'Home Points difference', 'Away Points difference',
+                         lambda ds: ds['Home points'],
+                         lambda ds: ds['Away points']),
 
                     'Shot difference':
                         namedtuple('Shot_Diff',
@@ -259,10 +271,18 @@ def run_paired_t_test_for_statistic(df_pairs, statistic):
     data['value'].append(r'$\mu$$_{home}$ = $\mu$$_{away}$')
     data['name'].append('Alt. hypothesis:')
     data['value'].append(r'$\mu$$_{home}$ != $\mu$$_{away}$')
-    data['name'].append("statistic:")
+    data['name'].append("t statistic:")
     data['value'].append(f"{statistic}")
     data['name'].append("p-value:")
     data['value'].append(f"{pvalue}")
+    data['name'].append("   ")
+    data['value'].append("   ")
+    if float(pvalue) < _alpha:
+        data['name'].append(fr'p-value < $\alpha$ ({_alpha})')
+        data['value'].append("We reject the\nnull hypothesis")
+    else:
+        data['name'].append(fr'p-value >= $\alpha$ ({_alpha})')
+        data['value'].append("We fail to reject the\nnull hypothesis")
     df = pd.DataFrame(data)
     df = df[col_order]
     # df.set_index('name', inplace=True)
@@ -302,43 +322,82 @@ def away_goals_per_shot(series):
     return goals_per_shot
 
 
-def augment_df(match_df, season):
+def home_points(series):
+    if series['home_team_goal_count'] == series['away_team_goal_count']:
+        points = 1
+    elif series['home_team_goal_count'] > series['away_team_goal_count']:
+        points = 3
+    else:
+        points = 0
+    return points
+
+
+def away_points(series):
+    if series['home_team_goal_count'] == series['away_team_goal_count']:
+        points = 1
+    elif series['home_team_goal_count'] > series['away_team_goal_count']:
+        points = 0
+    else:
+        points = 3
+    return points
+
+def augment_df(match_df):
     match_df['Home Shot accuracy'] = match_df.apply(home_shot_accuracy, axis=1)
     match_df['Away Shot accuracy'] = match_df.apply(away_shot_accuracy, axis=1)
-    # print(match_df['Home Shot accuracy'].describe())
-    # print(match_df['Away Shot accuracy'].describe())
 
     match_df['Home Shots per goal'] = match_df.apply(home_goals_per_shot, axis=1)
     match_df['Away Shots per goal'] = match_df.apply(away_goals_per_shot, axis=1)
-    # print(match_df[match_df['season'] == 2018]['Home Shots per goal'].describe())
-    # print(match_df[match_df['season'] == 2018]['Away Shots per goal'].describe())
+
+    match_df['Home points'] = match_df.apply(home_points, axis=1)
+    match_df['Away points'] = match_df.apply(away_points, axis=1)
 
     # Add output of describe to a new data frame
     descriptive_stats = pd.DataFrame({'Home Shot accuracy': match_df['Home Shot accuracy'].describe()})
     descriptive_stats['Away Shot accuracy'] = match_df['Away Shot accuracy'].describe()
-    descriptive_stats['Home Shots per goal'] = match_df[match_df['season'] == 2018]['Home Shots per goal'].describe()
-    descriptive_stats['Away Shots per goal'] = match_df[match_df['season'] == 2018]['Away Shots per goal'].describe()
+    # descriptive_stats['Home Shots per goal'] = match_df[match_df['season'] == season]['Home Shots per goal'].describe()
+    # descriptive_stats['Away Shots per goal'] = match_df[match_df['season'] == season]['Away Shots per goal'].describe()
     print(tabulate(descriptive_stats, headers='keys', tablefmt='psql'))
-    return descriptive_stats
 
 
-def descriptive_stats_to_df(match_df, season, stat_names):
+
+def descriptive_stats_to_df(match_df, season, statistic):
+    """
+    Returns the home and away descriptive statistics for a given season as a data frame
+
+    :param match_df:
+    :param season:
+    :param statistic:
+    :return:
+    """
     descriptive_stats = pd.DataFrame()
-    for stat_name in stat_names:
+
+    stat_metrics = [statistic.home_metric, statistic.away_metric]
+
+    for metric in stat_metrics:
+        ds = metric(match_df[match_df['season'] == season]).describe()
+
         if not descriptive_stats.empty:
-            descriptive_stats[stat_name] =  match_df[match_df['season'] == season][stat_name].describe()
+            descriptive_stats[ds.name] = metric(match_df[match_df['season'] == season]).describe()
         else:
-            descriptive_stats = pd.DataFrame({stat_name: match_df[match_df['season'] == season][stat_name].describe()})
+            descriptive_stats = pd.DataFrame({ds.name: metric(match_df[match_df['season'] == season]).describe()})
     return descriptive_stats
 
 
 def plot_statistic(plot_ax, df_pairs, year, statistic):
+    """
+    If the statistic has integral or unit level x-axis values then the number of bins is the number of x-axis units
+    Else plots the histogram using about 20 bins
+    :param plot_ax:
+    :param df_pairs:
+    :param year:
+    :param statistic:
+    :return:
+    """
     num_bins = 20
     home = statistic.home_label
     away = statistic.away_label
     max_x = max(df_pairs[home].max(), df_pairs[away].max()) + 0.5
     min_x = min(df_pairs[home].min(), df_pairs[away].min()) - 0.5
-    # +1 because the high of range is not included
 
     # Assume about 20 bins
     # 20 = (max-min) * step. Therefore step = 20 / (max - min)
@@ -347,6 +406,7 @@ def plot_statistic(plot_ax, df_pairs, year, statistic):
     else:
         step = (max_x - min_x) / num_bins
 
+    # +1 because the high of range is not included
     bins = np.arange(min_x, max_x + 1, step).tolist()
 
     # while len(bins) > 20:
@@ -356,7 +416,7 @@ def plot_statistic(plot_ax, df_pairs, year, statistic):
     x = df_pairs[home]
     y = df_pairs[away]
 
-    plot_ax.set_title(statistic.title + f"({year})")
+    plot_ax.set_title(statistic.title + f" ({year})")
     # plot_ax.hist([x, y], bins, label=[home, away])
 
     sns.distplot(x, bins, hist=True, kde=True, norm_hist=False, axlabel=False, color='r', ax=plot_ax)
@@ -364,16 +424,58 @@ def plot_statistic(plot_ax, df_pairs, year, statistic):
     plot_ax.legend([home.split(' ', 1)[0], away.split(' ', 1)[0]], loc='upper right')
 
 
-def plot_descriptive_statistic(match_df, season, stat_names, plot_ax):
+def calc_cohens_d(group1, group2):
+    # Compute Cohen's d.
+    # returns a floating point number
+
+    diff = group1['mean'] - group2['mean']
+    n1 = group1['count']
+    n2 = group2['count']
+    var1 = group1['std']**2
+    var2 = group2['std']**2
+
+    # Calculate the pooled threshold as shown earlier
+    pooled_var = ((n1-1) * var1 + (n2-1) * var2) / (n1 + n2 - 1 - 1)
+
+    # Calculate Cohen's d statistic
+    d = diff / np.sqrt(pooled_var)
+    return d
+
+def calc_cohens_d_for_paired_samples(group1, group2):
+    # Compute Cohen's d.
+    # returns a floating point number
+
+    diff = group1['mean'] - group2['mean']
+    n1 = group1['count']
+    n2 = group2['count']
+    var1 = group1['std']**2
+    var2 = group2['std']**2
+
+    # Calculate the pooled threshold as shown earlier
+    pooled_var = (var1 + var2) / 2
+
+    # Calculate Cohen's d statistic
+    d = diff / np.sqrt(pooled_var)
+    return d
+
+
+def plot_descriptive_statistic(match_df, season, statistic, plot_ax):
     """
 
     :param match_df:
     :param season:
-    :param stat_names: a list of the stat names
+    :param statistic
     :param plot_ax:
     :return:
     """
-    df = descriptive_stats_to_df(match_df, season, stat_names)
+    df = descriptive_stats_to_df(match_df, season, statistic)
+    stat_metrics = [statistic.home_metric, statistic.away_metric]
+
+    cohens_d = calc_cohens_d(df.iloc[:, 0], df.iloc[:, 1])
+    print(f"Cohen's d: {cohens_d}")
+    cohens_d = calc_cohens_d_for_paired_samples(df.iloc[:, 0], df.iloc[:, 1])
+    print(f"Cohen's d for paired samples: {cohens_d}")
+
     df = df.round(3)
     # Only care about mean and std deviation
     df = df.loc[['mean', 'std']]
@@ -386,35 +488,58 @@ def plot_descriptive_statistic(match_df, season, stat_names, plot_ax):
     df.columns = new_cols
 
     print(df)
-    plot_ax.axis('off')
     mpl_table = plot_ax.table(cellText=df.values, rowLabels=df.index,  colLabels=df.columns, loc='center',
                               edges='horizontal')
     mpl_table.auto_set_font_size(False)
-    mpl_table.scale(1, 1.5)
+    mpl_table.scale(1, 1.1)
+    return cohens_d
 
 
-def plot_t_test_result(df, plot_ax):
+def plot_t_test_result(df, cohens_d, plot_ax):
     plot_ax.axis('off')
 
+    title = fr'Two sample paired T-test: $\alpha$={_alpha}'
+
+    data = {
+        'name': [],
+        'value': []
+    }
+    data['name'].append("Cohen's D:")
+    data['value'].append(format(cohens_d, ".3g"))
+    df = pd.concat([pd.DataFrame(data),df])
+
+    plot_ax.set_title(title)
+    # Left, bottom, width, height  bbox=[0.0, 0, 3, 2]
     mpl_table = plot_ax.table(cellText=df.values,  loc='center', edges='open', cellLoc='left')
+
     # colWidths=[0.4]*len(df.columns))
     mpl_table.auto_set_font_size(False)
     mpl_table.scale(1, 1.5)
 
 
-def plot_figure(match_df, df_pairs, year, t_test_results):
+def plot_figure(match_df, df_pairs, year, t_test_results, stats: list):
+    """
+    Plot up to two stats on a figure
+    :param match_df:
+    :param df_pairs:
+    :param year:
+    :param t_test_results:
+    :param stats:
+    :return:
+    """
+    num_stats = 2
+    i = 0
     fig, ax_lst = plt.subplots(3, 2, figsize=(11, 7.5))
 
-    plot_statistic(ax_lst[0, 0], df_pairs, year, stats_to_compute['Goal difference'])
-    plot_descriptive_statistic(match_df, year, ['home_team_goal_count', 'away_team_goal_count'], ax_lst[1, 0])
-    plot_t_test_result(t_test_results['Goal difference'], ax_lst[2, 0])
+    # Turn of the axis display for the bottom 4 charts in the figure, using list comprehension
+    flat_list = [j.axis('off') for sub in ax_lst[1:] for j in sub]
 
-    plot_statistic(ax_lst[0, 1], df_pairs, year, stats_to_compute['Shot difference'])
-    plot_descriptive_statistic(match_df, year, ['home_team_shots', 'away_team_shots'], ax_lst[1, 1])
-    plot_t_test_result(t_test_results['Shot difference'], ax_lst[2, 1])
-
-    # plot_statistic(ax_lst[1, 0], df_pairs, year, stats_to_compute['Shot accuracy'])
-    # plot_statistic(ax_lst[1, 1], df_pairs, year, stats_to_compute['Possession'])
+    while i < num_stats and i < len(stats):
+        stat = stats[i]
+        plot_statistic(ax_lst[0, i], df_pairs, year, stat)
+        cohens_d = plot_descriptive_statistic(match_df, year, stat, ax_lst[1, i])
+        plot_t_test_result(t_test_results[stat.title], cohens_d, ax_lst[2, i])
+        i += 1
     plt.show()
 
 
@@ -422,20 +547,21 @@ def run_paired_t_test(year):
     t_test_results = {}
     match_df = createDBTables.read_matches_from_db()
     # Add derived metrics to the data frame
-    augment_df(match_df, year)
+    augment_df(match_df)
     pairs = generate_all_pairs_evenly(match_df, year)
     print(len(pairs))
     df_pairs = paired_results(match_df, year, pairs)
 
-    tests_to_run = ['Goal difference', 'Shot difference', 'Possession']
+    tests_to_run = ['Goal difference', 'Shot difference', 'Possession', 'Points difference']
     for test in tests_to_run:
         t_test_result = run_paired_t_test_for_statistic(df_pairs, test)
         t_test_results[test] = t_test_result
 
-    plot_figure(match_df, df_pairs, year, t_test_results)
+    plot_figure(match_df, df_pairs, year, t_test_results,
+                [stats_to_compute['Goal difference'], stats_to_compute['Shot difference']])
 
-    #  (f"Shot difference\nhome vs. away ({year})", 'Home Shot difference', 'Away Shot difference'),
-    #  (f"Shot accuracy\nhome vs. away ({year})", 'Home Shot accuracy', 'Away Shot accuracy')])
+    plot_figure(match_df, df_pairs, year, t_test_results,
+                [stats_to_compute['Possession'], stats_to_compute['Points difference']])
 
     if False:
         print(df_pairs['Home Shot difference'].describe())
