@@ -48,11 +48,11 @@ stats_to_compute = {'Goal difference':
                          lambda ds: ds['Home Shot accuracy'],
                          lambda ds: ds['Away Shot accuracy']),
 
-                    'Possession':
+                    'Possession difference':
                         namedtuple('Possession',
                                    ['order', 'integral_stat', 'title', 'home_label', 'away_label', 'home_metric',
                                     'away_metric'])
-                        (3, False, 'Possession', 'Home Possession', 'Away Possession',
+                        (3, False, 'Possession difference', 'Home Possession difference', 'Away Possession difference',
                          lambda ds: ds['home_team_possession'],
                          lambda ds: ds['away_team_possession']),
 
@@ -543,25 +543,25 @@ def plot_figure(match_df, df_pairs, year, t_test_results, stats: list):
     plt.show()
 
 
-def run_paired_t_test(year):
+def run_paired_t_test_with_pairs(year, pairs):
     t_test_results = {}
     match_df = createDBTables.read_matches_from_db()
     # Add derived metrics to the data frame
     augment_df(match_df)
-    pairs = generate_all_pairs_evenly(match_df, year)
+
     print(len(pairs))
     df_pairs = paired_results(match_df, year, pairs)
 
-    tests_to_run = ['Goal difference', 'Shot difference', 'Possession', 'Points difference']
+    tests_to_run = ['Goal difference', 'Shot difference', 'Possession difference', 'Points difference']
     for test in tests_to_run:
         t_test_result = run_paired_t_test_for_statistic(df_pairs, test)
         t_test_results[test] = t_test_result
 
     plot_figure(match_df, df_pairs, year, t_test_results,
-                [stats_to_compute['Goal difference'], stats_to_compute['Shot difference']])
+                [stats_to_compute['Goal difference'], stats_to_compute['Possession difference']])
 
-    plot_figure(match_df, df_pairs, year, t_test_results,
-                [stats_to_compute['Possession'], stats_to_compute['Points difference']])
+    # plot_figure(match_df, df_pairs, year, t_test_results,
+    #            [stats_to_compute['Shot difference'], stats_to_compute['Points difference']])
 
     if False:
         print(df_pairs['Home Shot difference'].describe())
@@ -572,6 +572,62 @@ def run_paired_t_test(year):
         print_match_pair(match_df, year, 'Manchester United', 'Liverpool')
 
     return match_df, df_pairs
+
+
+def run_paired_t_test(year):
+    match_df = createDBTables.read_matches_from_db()
+    pairs = generate_all_pairs_evenly(match_df, year)
+    return run_paired_t_test_with_pairs(year, pairs)
+
+
+def get_corresponding_away_game_for_single_game(match_df, home_game_key):
+    """
+    Should return a list of paired games
+    :return:
+    """
+    res = []
+    home_match = match_df[match_df['match_key'] == home_game_key]
+    home_match_series = home_match.iloc[0]
+
+    home_team = home_match_series['home_team_name']
+    away_team = home_match_series['away_team_name']
+    season = home_match_series['season']
+
+    res.append((home_team, away_team))
+    return res
+
+
+def get_bad_weather_pairs(year):
+    """
+    Currently just hard-coded for testing purposes
+    :param year:
+    :return:
+    """
+    t_test_results = {}
+    pairs = []
+    match_df = createDBTables.read_matches_from_db()
+    # Add derived metrics to the data frame
+    augment_df(match_df)
+
+    # The match keys for the bad weather home games
+    bad_weather_home_games = ['Wolverhampton Wanderers vs Liverpool 12-21-18',
+                              'AFC Bournemouth vs Brighton & Hove Albion 12-22-18']
+    for game in bad_weather_home_games:
+        pairs.extend(get_corresponding_away_game_for_single_game(match_df, game))
+    print(pairs)
+    return pairs
+
+
+def run_bad_weather_paired_t_test(year):
+    """
+    Assumption should be that there is just bad weather for the home match
+    :param year:
+    :return:
+    """
+    match_df = createDBTables.read_matches_from_db()
+
+    pairs = get_bad_weather_pairs(year)
+    return run_paired_t_test_with_pairs(year, pairs)
 
 
 def run_action(year):
@@ -588,4 +644,7 @@ def run_action(year):
 
 
 if not is_interactive():
-    run_paired_t_test(2018)
+    # run_paired_t_test(2018)
+
+    run_bad_weather_paired_t_test(2018)
+    pass
