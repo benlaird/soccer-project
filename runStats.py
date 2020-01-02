@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 from tabulate import tabulate
-from functools import reduce
+from datetime import datetime, timedelta
 
 import createDBTables
 
@@ -419,8 +419,9 @@ def plot_statistic(plot_ax, df_pairs, year, statistic):
     plot_ax.set_title(statistic.title + f" ({year})")
     # plot_ax.hist([x, y], bins, label=[home, away])
 
-    sns.distplot(x, bins, hist=True, kde=True, norm_hist=False, axlabel=False, color='r', ax=plot_ax)
+    sea_ax = sns.distplot(x, bins, hist=True, kde=True, norm_hist=False, axlabel=False, color='r', ax=plot_ax)
     sns.distplot(y, bins, hist=True, kde=True, norm_hist=False, axlabel=False, color='b', ax=plot_ax)
+    sea_ax.set(xlabel=statistic.title, ylabel='Probability Density')
     plot_ax.legend([home.split(' ', 1)[0], away.split(' ', 1)[0]], loc='upper right')
 
 
@@ -504,8 +505,9 @@ def plot_t_test_result(df, cohens_d, plot_ax):
         'name': [],
         'value': []
     }
-    data['name'].append("Cohen's D:")
-    data['value'].append(format(cohens_d, ".3g"))
+    # Commented out Cohen's D
+    # data['name'].append("Cohen's D:")
+    # data['value'].append(format(cohens_d, ".3g"))
     df = pd.concat([pd.DataFrame(data),df])
 
     plot_ax.set_title(title)
@@ -517,7 +519,7 @@ def plot_t_test_result(df, cohens_d, plot_ax):
     mpl_table.scale(1, 1.5)
 
 
-def plot_figure(match_df, df_pairs, year, t_test_results, stats: list):
+def plot_figure(match_df, df_pairs, year, t_test_results, stats: list, title):
     """
     Plot up to two stats on a figure
     :param match_df:
@@ -530,6 +532,7 @@ def plot_figure(match_df, df_pairs, year, t_test_results, stats: list):
     num_stats = 2
     i = 0
     fig, ax_lst = plt.subplots(3, 2, figsize=(11, 7.5))
+    fig.suptitle(title, fontsize=14)
 
     # Turn of the axis display for the bottom 4 charts in the figure, using list comprehension
     flat_list = [j.axis('off') for sub in ax_lst[1:] for j in sub]
@@ -543,11 +546,16 @@ def plot_figure(match_df, df_pairs, year, t_test_results, stats: list):
     plt.show()
 
 
-def run_paired_t_test_with_pairs(year, pairs):
+def run_paired_t_test_with_pairs(match_df, year, pairs, title):
     t_test_results = {}
+
+    """  Moving this
     match_df = createDBTables.read_matches_from_db()
     # Add derived metrics to the data frame
     augment_df(match_df)
+    
+    """
+
 
     print(len(pairs))
     df_pairs = paired_results(match_df, year, pairs)
@@ -558,7 +566,8 @@ def run_paired_t_test_with_pairs(year, pairs):
         t_test_results[test] = t_test_result
 
     plot_figure(match_df, df_pairs, year, t_test_results,
-                [stats_to_compute['Goal difference'], stats_to_compute['Possession difference']])
+                [stats_to_compute['Goal difference'], stats_to_compute['Possession difference']],
+                title)
 
     # plot_figure(match_df, df_pairs, year, t_test_results,
     #            [stats_to_compute['Shot difference'], stats_to_compute['Points difference']])
@@ -576,8 +585,10 @@ def run_paired_t_test_with_pairs(year, pairs):
 
 def run_paired_t_test(year):
     match_df = createDBTables.read_matches_from_db()
+    # Add derived metrics to the data frame
+    augment_df(match_df)
     pairs = generate_all_pairs_evenly(match_df, year)
-    return run_paired_t_test_with_pairs(year, pairs)
+    return run_paired_t_test_with_pairs(match_df, year, pairs, f"Paired T-test for all {len(pairs)} paired games")
 
 
 def get_corresponding_away_game_for_single_game(match_df, home_game_key):
@@ -597,25 +608,77 @@ def get_corresponding_away_game_for_single_game(match_df, home_game_key):
     return res
 
 
-def get_bad_weather_pairs(year):
+def get_bad_weather_pairs(match_df):
     """
     Currently just hard-coded for testing purposes
+    :param match_df
     :param year:
     :return:
     """
-    t_test_results = {}
     pairs = []
-    match_df = createDBTables.read_matches_from_db()
-    # Add derived metrics to the data frame
-    augment_df(match_df)
 
     # The match keys for the bad weather home games
     bad_weather_home_games = ['Wolverhampton Wanderers vs Liverpool 12-21-18',
                               'AFC Bournemouth vs Brighton & Hove Albion 12-22-18']
-    for game in bad_weather_home_games:
+    for game in match_df['match_key']:
+        print(game)
         pairs.extend(get_corresponding_away_game_for_single_game(match_df, game))
     print(pairs)
     return pairs
+
+
+bad_weather = ['Blizzard', 'Heavy rain', 'Light sleet', 'Light snow',
+               'Light snow showers', 'Mist', 'Moderate or heavy rain with thunder',
+               'Moderate rain', 'Moderate rain at times']
+
+
+def get_hour(series):
+    # Get the time of half time by adding 45 minutes
+    dt = series['datetime'] + timedelta(minutes=45)
+    # Round to nearest hour, times on the half hour round up
+    if dt.minute >= 30:
+        dt += timedelta(minutes=30)
+    return dt.hour * 100
+
+
+def get_weather_for_match_hour(match_df, weather_df, season):
+    match_df['hour'] = match_df.apply(get_hour, axis=1)
+    cols = list(match_df)
+    cols.insert(2, cols.pop(cols.index('hour')))
+    match_df = match_df.loc[:, cols]
+
+    merged_df = pd.merge(match_df[match_df['season'] == season], weather_df, how='left',
+                         left_on=['match_key', 'hour'],
+                         right_on=['match_key', 'time'])
+    return merged_df
+
+
+def bad_weather_matches(merged_df):
+    bad_weather_desc = merged_df[merged_df['weatherDesc'].isin(bad_weather)]
+    bad_weather_matches = merged_df[(merged_df['precipMM'] >= 0.4) |
+                                    (merged_df['visibilityMiles'] < 1) |
+                                    (merged_df['tempF'] <= 32) |
+                                    (merged_df['windspeedMiles'] >= 25)]
+    bw_concat = pd.concat([bad_weather_desc, bad_weather_matches]).drop_duplicates().reset_index(drop=True)
+
+    print(
+        f"Lengths: bad_weather_desc: {len(bad_weather_desc)}, bad_weather_matches: {len(bad_weather_matches)}, bw_concat: {len(bw_concat)}")
+    return bw_concat
+
+
+def get_selected_pairs_in_df(pairs, season, df):
+    res = pd.DataFrame()
+    for team, opponent in pairs:
+
+        # Find home match
+        home_match = df[(df['season'] == season) & (df['home_team_name'] == team) &
+                        (df['away_team_name'] == opponent)]
+
+        # Find away match
+        away_match = df[(df['season'] == season) & (df['home_team_name'] == opponent) &
+                        (df['away_team_name'] == team)]
+        res = pd.concat([res, home_match, away_match])
+    return res
 
 
 def run_bad_weather_paired_t_test(year):
@@ -624,10 +687,22 @@ def run_bad_weather_paired_t_test(year):
     :param year:
     :return:
     """
+    # print(tabulate(bad_weather_df, headers='keys', tablefmt='psql'))
     match_df = createDBTables.read_matches_from_db()
+    augment_df(match_df)
+    weather_df = createDBTables.read_weather_from_db()
+    merged_df = get_weather_for_match_hour(match_df, weather_df, 2018)
+    bad_weather_df = bad_weather_matches(merged_df)
 
-    pairs = get_bad_weather_pairs(year)
-    return run_paired_t_test_with_pairs(year, pairs)
+    print(f"Number of bad weather matches: {len(bad_weather_df)}")
+
+    pairs = get_bad_weather_pairs(bad_weather_df)
+
+    # get subset dataframe just with the pairs of bad weather/good weather matches
+    subset_match_df = get_selected_pairs_in_df(pairs, 2018, match_df)
+    print(tabulate(subset_match_df, headers='keys', tablefmt='psql'))
+    return run_paired_t_test_with_pairs(subset_match_df, year, pairs,
+                                        f"Paired t-test for {int(len(subset_match_df)/2)} bad weather home games")
 
 
 def run_action(year):
@@ -644,7 +719,6 @@ def run_action(year):
 
 
 if not is_interactive():
-    # run_paired_t_test(2018)
+    run_paired_t_test(2018)
 
-    run_bad_weather_paired_t_test(2018)
-    pass
+    # run_bad_weather_paired_t_test(2018)
