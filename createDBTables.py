@@ -104,6 +104,11 @@ def add_to_table(movie_dict):
 
 
 def insert_to_table(df):
+    """
+    This method assumes there is no index column on the data frame
+    :param df:
+    :return:
+    """
     global cnx, cursor
     debug = False
     # creating column list for insertion
@@ -237,3 +242,10 @@ def read_matches_from_db():
     df = pd.read_sql("select * from matches", cnx)
     close_db()
     return df
+
+
+def read_weather_from_db():
+    open_db()
+    weather_df = pd.read_sql("select * from weather", cnx)
+    close_db()
+    return weather_df
