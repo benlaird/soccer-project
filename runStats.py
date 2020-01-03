@@ -531,8 +531,8 @@ def plot_figure(match_df, df_pairs, year, t_test_results, stats: list, title):
     """
     num_stats = 2
     i = 0
-    fig, ax_lst = plt.subplots(3, 2, figsize=(11, 7.5))
-    fig.suptitle(title, fontsize=14)
+    fig, ax_lst = plt.subplots(3, 2, figsize=(11, 8.5))
+    fig.suptitle(title, fontsize=16)
 
     # Turn of the axis display for the bottom 4 charts in the figure, using list comprehension
     flat_list = [j.axis('off') for sub in ax_lst[1:] for j in sub]
@@ -543,8 +543,12 @@ def plot_figure(match_df, df_pairs, year, t_test_results, stats: list, title):
         cohens_d = plot_descriptive_statistic(match_df, year, stat, ax_lst[1, i])
         plot_t_test_result(t_test_results[stat.title], cohens_d, ax_lst[2, i])
         i += 1
-    plt.show()
 
+    if "weather" in title:
+        plt.savefig("weather.png")
+    else:
+        plt.savefig("fullSeason.png")
+    plt.show()
 
 def run_paired_t_test_with_pairs(match_df, year, pairs, title):
     t_test_results = {}
@@ -588,7 +592,7 @@ def run_paired_t_test(year):
     # Add derived metrics to the data frame
     augment_df(match_df)
     pairs = generate_all_pairs_evenly(match_df, year)
-    return run_paired_t_test_with_pairs(match_df, year, pairs, f"Paired T-test for all {len(pairs)} paired games")
+    return run_paired_t_test_with_pairs(match_df, year, pairs, f"Home team scores more goals than away team")
 
 
 def get_corresponding_away_game_for_single_game(match_df, home_game_key):
@@ -702,7 +706,7 @@ def run_bad_weather_paired_t_test(year):
     subset_match_df = get_selected_pairs_in_df(pairs, 2018, match_df)
     print(tabulate(subset_match_df, headers='keys', tablefmt='psql'))
     return run_paired_t_test_with_pairs(subset_match_df, year, pairs,
-                                        f"Paired t-test for {int(len(subset_match_df)/2)} bad weather home games")
+                                        f"Home field advantage dissipates in bad weather")
 
 
 def run_action(year):
@@ -719,6 +723,12 @@ def run_action(year):
 
 
 if not is_interactive():
+<<<<<<< HEAD
     run_paired_t_test(2018)
 
     # run_bad_weather_paired_t_test(2018)
+=======
+    # run_paired_t_test(2018)
+
+    run_bad_weather_paired_t_test(2018)
+>>>>>>> b10b1908b3d11ffb6f4a0ffd0c0367215431af0d
